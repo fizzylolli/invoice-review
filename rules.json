@@ -1,0 +1,37 @@
+{
+  "threshold": {
+    "enabled": true,
+    "amount": 5000.0
+  },
+  "duplicate": {
+    "enabled": true
+  },
+  "line_item_math": {
+    "enabled": true,
+    "tolerance": 0.01
+  },
+  "foreign_currency": {
+    "enabled": true,
+    "eur_to_usd": 1.1
+  },
+  "unreadable_field": {
+    "enabled": true
+  },
+  "portfolio_company": {
+    "enabled": true,
+    "names": [
+      "Grasp",
+      "PlanIt",
+      "WorthPoint"
+    ]
+  },
+  "overdue": {
+    "enabled": false,
+    "days": 30
+  },
+  "new_vendor": {
+    "enabled": false,
+    "known_vendors": []
+  },
+  "custom": []
+}
