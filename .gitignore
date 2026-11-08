@@ -1,0 +1,14 @@
+# Never commit the invoices or anything produced from them
+packet/
+invoices/
+out/
+Weekly Review/
+history.json
+run_log.txt
+*.xlsx
+*.csv
+monday_digest.txt
+monday_digest.html
+rules_used.json
+__pycache__/
+run_summary.json
