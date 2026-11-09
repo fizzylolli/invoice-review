@@ -443,7 +443,7 @@ def row_summary(rows):
         items = r.get("line_items") or []
         if items and r.get("total") is not None and r["total"] > sum(items) + 0.01:
             over += r["total"] - sum(items)
-            over_who.append("%s %s (%s)" % (r.get("vendor") or "unknown vendor", r.get("invoice_number") or "", r["file"]))
+            over_who.append(("%s %s" % (r.get("vendor") or "unknown vendor", r.get("invoice_number") or "")).strip())
     return {
         "n": len(rows), "y": sum(r["flag"] == "Y" for r in rows),
         "usd_total": sum(r["total"] for r in usd),
@@ -707,8 +707,8 @@ def write_digest_html(rows, outdir, as_of, t, flagged, clear):
         f'<td style="{td};text-align:right">${r["total"]:,.2f}</td></tr>' for r in clear)
     h.append(f'<h3 style="margin:14px 0 0">Clear to pay ({len(clear)}, ${t["usd_clear"]:,.2f}), earliest due first</h3>')
     h.append(table(["Due", "Vendor", "Invoice", "Amount"], body))
-    h.append('<p style="color:#666;font-size:12px;margin-top:6px">Record each decision in the Review Queue tab of '
-             'invoice_review.xlsx (Decision column). This tool never pays anything.</p>')
+    h.append('<p style="color:#666;font-size:12px;margin-top:6px">Open the Invoice Review app and click Clear on each flagged invoice you have checked. '
+             'Send to AP then lists what was never flagged plus what you cleared. This tool never pays anything.</p>')
     h.append("</div>")
     open(os.path.join(outdir, "monday_digest.html"), "w", encoding="utf-8").write("\n".join(h))
 
