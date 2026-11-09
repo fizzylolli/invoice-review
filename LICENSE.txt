@@ -1,0 +1,6 @@
+Copyright (c) 2026 Holli Powell. All rights reserved.
+
+This code is shared for evaluation as part of a job application exercise.
+You may read it and run it to evaluate it. You may not copy, modify,
+distribute, or use it in any product or business without written
+permission from the author.
