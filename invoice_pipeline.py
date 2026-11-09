@@ -438,17 +438,19 @@ def row_summary(rows):
     usd = [r for r in rows if r.get("total") is not None and r.get("currency", "USD") == "USD"]
     dup_copies = [r for r in rows if any(x.startswith("duplicate of") for x in r["reasons"])]
     over = 0.0
+    over_who = []     # which invoices the overbilling came from, so the digest can name them
     for r in rows:
         items = r.get("line_items") or []
         if items and r.get("total") is not None and r["total"] > sum(items) + 0.01:
             over += r["total"] - sum(items)
+            over_who.append("%s %s (%s)" % (r.get("vendor") or "unknown vendor", r.get("invoice_number") or "", r["file"]))
     return {
         "n": len(rows), "y": sum(r["flag"] == "Y" for r in rows),
         "usd_total": sum(r["total"] for r in usd),
         "usd_flagged": sum(r["total"] for r in usd if r["flag"] == "Y"),
         "usd_clear": sum(r["total"] for r in usd if r["flag"] == "N"),
         "dup_exposure": sum(r["total"] for r in dup_copies if r.get("total")),
-        "dup_n": len(dup_copies), "overbilled": over,
+        "dup_n": len(dup_copies), "overbilled": over, "over_who": over_who,
     }
 
 
@@ -517,7 +519,7 @@ def write_outputs(rows, outdir, as_of, rules=None):
     flagged = sorted((r for r in rows if r["flag"] == "Y"), key=lambda r: (triage(r)[0], -(r.get("total") or 0)))
     for r in flagged:
         pr, act = triage(r)
-        rq.append(["1 - High" if pr == 1 else "2 - Medium", r["file"], r.get("vendor") or "",
+        rq.append(["1 - Check first" if pr == 1 else "2 - Needs approval", r["file"], r.get("vendor") or "",
                    r.get("invoice_number") or "", r.get("total"),
                    r["due_final"].isoformat() if r.get("due_final") else "",
                    "; ".join(r["reasons"]), act, "", ""])
@@ -602,14 +604,24 @@ def write_outputs(rows, outdir, as_of, rules=None):
     try:
         wb.save(os.path.join(outdir, "invoice_review.xlsx"))
     except PermissionError:
-        sys.exit("Could not save invoice_review.xlsx because it is open in Excel (or locked by Drive). "
-                 "Close the spreadsheet and click Run again.")
+        # Locked (open in Excel, or a leftover lock from Drive). Save a dated copy instead so the run still finishes.
+        alt = "invoice_review_%s.xlsx" % datetime.now().strftime("%H%M%S")
+        try:
+            wb.save(os.path.join(outdir, alt))
+            print("NOTE: invoice_review.xlsx is locked (open in Excel?). Saved this run as " + alt + " instead.")
+        except PermissionError:
+            sys.exit("Could not save the spreadsheet. Close Excel and click Run again.")
     with open(os.path.join(outdir, "rules_used.json"), "w", encoding="utf-8") as f:   # audit trail of this run
         json.dump(rules, f, indent=2)
 
     write_digest(rows, outdir, as_of, t, flagged)
     with open(os.path.join(outdir, "run_summary.json"), "w", encoding="utf-8") as f:   # read by the app window
         json.dump({
+            "rows": [dict(o, currency=r.get("currency", "USD"), priority=triage(r)[0] if r["flag"] == "Y" else None,
+                          usd_amount=(round(r["total"] * (float(rules["foreign_currency"].get("eur_to_usd", 1.10))
+                                                          if r.get("currency", "USD") == "EUR" else 1), 2)
+                                      if r.get("total") is not None else None))
+                     for r, o in zip(rows, out)],      # the same seven columns as the spreadsheet, every file
             "run_date": as_of.isoformat(), "files": t["n"], "flagged": t["y"], "clear": t["n"] - t["y"],
             "usd_clear": round(t["usd_clear"], 2), "dup_exposure": round(t["dup_exposure"], 2),
             "overbilled": round(t["overbilled"], 2),
@@ -626,8 +638,8 @@ def write_digest(rows, outdir, as_of, t, flagged):
          f"{t['n']} invoices processed. {t['y']} flagged. Nothing has been paid.", ""]
     if t["dup_exposure"] or t["overbilled"]:
         L.append(f"Caught this week: ${t['dup_exposure']:,.2f} in duplicate invoices and "
-                 f"${t['overbilled']:,.2f} of overbilling.\n")
-    for label, want in (("NEEDS A CLOSER LOOK FIRST", 1), ("NEEDS APPROVAL", 2)):
+                 f"${t['overbilled']:,.2f} of overbilling" + (" (" + "; ".join(t["over_who"]) + ")" if t["over_who"] else "") + ".\n")
+    for label, want in (("CHECK FIRST", 1), ("NEEDS APPROVAL", 2)):
         grp = [r for r in flagged if triage(r)[0] == want]
         if not grp:
             continue
@@ -664,7 +676,8 @@ def write_digest_html(rows, outdir, as_of, t, flagged, clear):
     if t["dup_exposure"] or t["overbilled"]:
         h.append(f'<p style="margin:0 0 14px;padding:8px 10px;background:#fff4e5;border-left:4px solid #e08a00">'
                  f'Caught this week: <b>${t["dup_exposure"]:,.2f}</b> in duplicate invoices and '
-                 f'<b>${t["overbilled"]:,.2f}</b> of overbilling.</p>')
+                 f'<b>${t["overbilled"]:,.2f}</b> of overbilling'
+                 + (' (<b>' + '; '.join(t["over_who"]) + '</b>)' if t["over_who"] else '') + '.</p>')
     from urllib.parse import quote
     def ask_link(r):
         """mailto link that opens a ready-to-send approval request. The To address is filled in by the Apps Script."""
@@ -675,7 +688,7 @@ def write_digest_html(rows, outdir, as_of, t, flagged, clear):
         return (f'<a href="mailto:?subject={quote(subj)}&body={quote(msg)}" '
                 f'style="display:inline-block;padding:5px 10px;background:#1f3a5f;color:#fff;'
                 f'text-decoration:none;border-radius:4px;font-size:12px;white-space:nowrap">Send for approval</a>')
-    for label, want in (("Needs a closer look first", 1), ("Needs approval", 2)):
+    for label, want in (("Check first", 1), ("Needs approval", 2)):
         grp = [r for r in flagged if triage(r)[0] == want]
         if not grp:
             continue

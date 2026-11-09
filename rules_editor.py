@@ -10,7 +10,8 @@ A page opens in your browser. It runs only on your own computer, nothing is uplo
 
 Uses only what comes with Python.
 """
-import json, os, subprocess, sys, threading, webbrowser
+import csv, json, os, subprocess, sys, threading, webbrowser
+from datetime import datetime
 from urllib.parse import parse_qs, urlparse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
@@ -20,6 +21,36 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 RULES_PATH = os.path.join(HERE, "rules.json")
 PIPELINE = os.path.join(HERE, "invoice_pipeline.py")
 OUT_DIR = os.path.join(HERE, "out")
+
+
+LAST_FOLDER = {}   # the invoice folder of the latest run
+DECISIONS_PATH = os.path.join(OUT_DIR, "decisions.json")
+
+
+def load_decisions():
+    try:
+        with open(DECISIONS_PATH, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def save_decisions(d):
+    """Approvals live next to the results. approvals.csv is the same list for anyone who wants to open it in Excel."""
+    os.makedirs(OUT_DIR, exist_ok=True)
+    tmp = DECISIONS_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(d, f, indent=1)
+    os.replace(tmp, DECISIONS_PATH)
+    try:
+        with open(os.path.join(OUT_DIR, "approvals.csv"), "w", newline="", encoding="utf-8") as f:
+            w = csv.writer(f)
+            w.writerow(["file", "vendor", "invoice_number", "amount", "decision", "when"])
+            for v in d.values():
+                w.writerow([v.get("file"), v.get("vendor"), v.get("invoice_number"), v.get("amount"), "approved", v.get("when")])
+    except OSError:
+        pass                                              # the CSV copy is optional (it may be open in Excel)
 
 
 def clean_rules(data):
@@ -113,7 +144,7 @@ PAGE = r"""<!doctype html>
 @media (prefers-color-scheme:dark){:root{--bg:#111418;--card:#1a1f26;--ink:#e6e9ee;--mute:#9aa3af;--line:#2d3540;--accent:#6ea0ff;--accent-ink:#0b1220;--ok:#6ee7a0;--bad:#fca5a5;--warn:#fcd34d;--off:#3a4350;--chip:#1e2a44}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
-main{max-width:900px;margin:0 auto;padding:24px 16px 60px}
+main{max-width:1180px;margin:0 auto;padding:24px 16px 60px}
 h1{font-size:24px;margin:0 0 4px} h2{font-size:17px;margin:0 0 8px}
 p.sub{margin:0 0 18px;color:var(--mute)}
 .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:12px}
@@ -148,6 +179,11 @@ th{text-align:left;color:var(--mute);font-weight:600;font-size:12.5px;padding:6p
 td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 .pri1{color:var(--bad);font-weight:600} .pri2{color:var(--warn);font-weight:600}
 .num{text-align:right;white-space:nowrap}
+th.sortable{cursor:pointer;user-select:none;white-space:nowrap} th.sortable:hover{text-decoration:underline} td.fa{color:var(--mute);font-weight:700}
+tr.flagrow td{background:rgba(220,38,38,.10)} tr.c-dup td{background:rgba(147,51,234,.14)} tr.c-math td{background:rgba(245,158,11,.22)} tr.c-cur td{background:rgba(37,99,235,.13)} tr.c-ent td{background:rgba(13,148,136,.15)} tr.c-unr td{background:rgba(107,114,128,.20)} tr.c-lim td{background:rgba(220,38,38,.10)}
+.legend{display:flex;gap:8px 14px;flex-wrap:wrap;margin:0 0 12px;font-size:13px} .legend button{cursor:pointer;border:1px solid transparent;border-radius:6px;background:none;color:inherit;font:inherit;padding:2px 6px;display:inline-flex;align-items:center;gap:6px} .legend .sw{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.25)} .legend button.on{border-color:#d97706;background:rgba(245,158,11,.15)}
+a.fl{color:inherit;text-decoration:underline dotted;cursor:pointer}
+tr.hl td{font-weight:700;border-top:2px solid #111;border-bottom:2px solid #111} tr.hl td:first-child{box-shadow:inset 5px 0 0 #111} button.chip{cursor:pointer;color:inherit;border:1px solid var(--line,#ccc);font:inherit} tr.apprrow td{background:rgba(22,101,52,.10)} button.sm{padding:4px 10px;font-size:13px;white-space:nowrap} td.act{white-space:nowrap} td.fy{color:var(--bad);font-weight:700} td.fn{color:var(--ok);font-weight:700}
 .small{font-size:13px;color:var(--mute)}
 details>summary{cursor:pointer;font-weight:600;font-size:17px;padding:2px 0}
 .browse{margin-top:10px;border:1px solid var(--line);border-radius:8px;overflow:hidden}
@@ -176,13 +212,30 @@ pre{background:#0f172a;color:#e2e8f0;padding:12px;border-radius:8px;overflow:aut
 <div class="card" id="results" hidden>
   <h2 id="headline"></h2>
   <div class="chips" id="chips"></div>
-  <table><thead><tr><th>Urgency</th><th>Invoice</th><th class="num">Amount</th><th>Why it was flagged</th><th>Suggested next step</th></tr></thead><tbody id="rows"></tbody></table>
+  <div class="legend" id="legend" aria-label="Colour key"></div>
+  <div class="inline" style="margin:4px 0 8px"><label style="display:flex;align-items:center;gap:6px;white-space:nowrap"><input type="checkbox" id="onlyflag" style="width:auto;margin:0"> Only what still needs a person</label>
+    <span class="small">Click a column heading to sort. Clearing a flag records that you checked it. It does not pay anything.</span></div>
+  <div style="overflow-x:auto"><table><thead id="allhead"></thead><tbody id="allrows"></tbody></table></div>
+  <details style="margin-top:12px"><summary><b>Review queue: what to do next</b></summary>
+    <table><thead><tr><th>Urgency</th><th>Invoice</th><th class="num">Amount</th><th>Why it was flagged</th><th>Suggested next step</th></tr></thead><tbody id="rows"></tbody></table>
+  </details>
   <div class="inline" style="margin-top:14px">
     <button id="openx" class="primary">Open the spreadsheet</button>
     <button id="opend">Open the Monday email</button>
     <button id="openf">Open the results folder</button>
+    <button id="openi">Open the invoice folder</button>
   </div>
   <p class="small" style="margin-bottom:0">The spreadsheet has a tab for every invoice, a review queue with a decision dropdown, a summary, and the rules used.</p>
+  <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
+    <div class="title">Send to AP</div>
+    <div class="desc" id="apdesc"></div>
+    <div class="inline" style="margin-top:8px">
+      <input type="text" id="apto" placeholder="AP email address" aria-label="Email address for accounts payable" inputmode="email">
+      <button id="sendap" class="primary">Send to AP</button>
+      <button id="copyap">Copy the list</button>
+    </div>
+    <div class="small" id="apnote" style="margin-top:6px"></div>
+  </div>
   <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--line)">
     <div class="title">Email this summary</div>
     <div class="desc">Opens a ready-to-send draft in Gmail. You press Send. Attach the spreadsheet if you want the full list.</div>
@@ -223,7 +276,7 @@ function field(label, input) { const id = 'f' + (++uid); input.id = id; return h
 function numIn(val, set, step='any') { const i = h('input', {type:'number', step, min:'0', value:val}); i.oninput = () => set(i.value === '' ? 0 : Number(i.value)); return i; }
 function area(val, set) { const t = h('textarea'); t.value = val; t.oninput = () => set(t.value); return t; }
 function textIn(val, set) { const i = h('input', {type:'text', value:val}); i.oninput = () => set(i.value); return i; }
-function sel(val, set) { const s = h('select', {}, h('option', {value:'1'}, 'High: check before anything else'), h('option', {value:'2'}, 'Medium: needs approval')); s.value = String(val); s.onchange = () => set(s.value); return s; }
+function sel(val, set) { const s = h('select', {}, h('option', {value:'1'}, 'Check first: possible error'), h('option', {value:'2'}, 'Needs approval')); s.value = String(val); s.onchange = () => set(s.value); return s; }
 
 const PARAMS = {
   threshold: c => field('Flag invoices over this amount (US dollars)', numIn(c.amount, v => c.amount = v)),
@@ -284,36 +337,175 @@ $('#run').onclick = async () => {
     await api('/api/rules', R);
     const out = await api('/api/run', {folder: $('#folder').value});
     if (!out.ok) { log.hidden = false; log.textContent = out.output; say('The run hit a problem. Details below.', 'err'); return; }
-    showResults(out.summary); say('Done.', 'ok');
+    showResults(out.summary, out.decisions); say('Done.', 'ok');
   } catch (e) { log.hidden = false; log.textContent = e.message; say('Run failed.', 'err'); }
   finally { btn.disabled = false; }
 };
-function showResults(s) {
-  LAST = s;
-  $('#headline').textContent = `${s.files} invoices checked: ${s.flagged} need a look, ${s.clear} clear to pay`;
-  const chips = $('#chips'); chips.replaceChildren();
-  if (s.dup_exposure) chips.append(h('span', {class:'chip'}, money(s.dup_exposure) + ' in duplicate invoices caught'));
-  if (s.overbilled) chips.append(h('span', {class:'chip'}, money(s.overbilled) + ' of overbilling caught'));
-  chips.append(h('span', {class:'chip'}, money(s.usd_clear) + ' clear to pay'));
+let DEC = {}, SORT = {col: null, dir: 1};
+const keyOf = r => r.file + '|' + (r.invoice_number || '') + '|' + (r.amount === '' || r.amount == null ? '' : r.amount);
+const isApproved = r => !!DEC[keyOf(r)];
+const needsReview = r => r.flag === 'Y' && !isApproved(r);
+const COLS = [['flag','Flag'], ['vendor','Vendor'], ['file','File'], ['invoice_number','Invoice #'], ['due_date','Due date'], ['amount','Amount'], ['reason','Reason'], ['','']];
+function sortValue(r, col) {
+  if (col === 'flag') return r.flag !== 'Y' ? 2 : (isApproved(r) ? 1 : 0);
+  if (col === 'amount') return r.amount === '' || r.amount == null ? null : (r.usd_amount != null ? r.usd_amount : r.amount);
+  return (r[col] || '').toString().toLowerCase();
+}
+function sortedRows() {
+  const rows = ((LAST && LAST.rows) || []).slice();
+  if (!SORT.col) return rows;
+  return rows.sort((a, b) => {
+    const x = sortValue(a, SORT.col), y = sortValue(b, SORT.col);
+    if (x === null && y === null) return 0; if (x === null) return 1; if (y === null) return -1;
+    return (x < y ? -1 : x > y ? 1 : 0) * SORT.dir;
+  });
+}
+function drawHead() {
+  const tr = h('tr', {});
+  COLS.forEach(([col, label]) => {
+    const th = h('th', {class: (col === 'amount' ? 'num ' : '') + (col ? 'sortable' : '')}, label + (SORT.col === col && col ? (SORT.dir === 1 ? ' \u25B2' : ' \u25BC') : ''));
+    if (col) th.onclick = () => { SORT = SORT.col === col ? {col, dir: -SORT.dir} : {col, dir: 1}; drawAll(); };
+    tr.append(th);
+  });
+  $('#allhead').replaceChildren(tr);
+}
+async function decide(r, action) {
+  try { const out = await api('/api/decide', {key: keyOf(r), action, row: {file: r.file, vendor: r.vendor, invoice_number: r.invoice_number, amount: r.amount}}); DEC = out.decisions || {}; refresh(); }
+  catch (e) { say('Could not save that decision: ' + e.message, 'err'); }
+}
+function approveBtn(r) {
+  const b = h('button', {class:'sm'}, 'Clear'); let timer = null;
+  b.onclick = () => {
+    if (!timer) { b.textContent = 'Confirm?'; timer = setTimeout(() => { b.textContent = 'Clear'; timer = null; }, 4000); return; }
+    clearTimeout(timer); b.disabled = true; decide(r, 'approve');
+  };
+  return b;
+}
+function drawAll() {
+  drawHead();
+  const tb = $('#allrows'); tb.replaceChildren();
+  const only = $('#onlyflag').checked;
+  sortedRows().filter(r => !only || needsReview(r)).forEach(r => {
+    const st = r.flag !== 'Y' ? 'N' : (isApproved(r) ? 'A' : 'Y');
+    tb.append(h('tr', {class: (st === 'Y' ? (catOf(r) ? catOf(r).cls : 'flagrow') : st === 'A' ? 'apprrow' : '') + (HL && HL.test(r) ? ' hl' : '')},
+      h('td', {class: st === 'Y' ? 'fy' : st === 'A' ? 'fa' : 'fn'}, st === 'A' ? 'Cleared' : r.flag),
+      h('td', {}, r.vendor), h('td', {}, h('a', {class:'fl', title:'Open this invoice', onclick: () => api('/api/open', {what:'invoice', file: r.file}).catch(e => say(e.message, 'err'))}, r.file)), h('td', {}, r.invoice_number), h('td', {}, r.due_date),
+      h('td', {class:'num'}, r.amount === '' ? '' : money(r.amount, r.currency)), h('td', {}, r.reason),
+      h('td', {class:'act'}, st === 'Y' ? approveBtn(r) : st === 'A' ? h('button', {class:'sm', onclick: () => decide(r, 'undo')}, 'Undo') : '')));
+  });
+}
+$('#onlyflag').onchange = drawAll;
+let HL = null;
+function highlight(test) {
+  HL = (HL && HL.id === test.id) ? null : test;      // click the same chip again to turn it off
+  drawAll();
+  if (HL) { const first = document.querySelector('#allrows tr.hl'); if (first) first.scrollIntoView({behavior:'smooth', block:'center'}); }
+  document.querySelectorAll('button.chip').forEach(b => b.style.outline = (HL && b.dataset.id === HL.id) ? '2px solid #d97706' : '');
+  drawLegend();
+}
+const CATS = [
+  {id:'dup', cls:'c-dup', color:'rgba(147,51,234,.45)', label:'Duplicate (pay once)', re:/duplicate of|also received/},
+  {id:'over', cls:'c-math', color:'rgba(245,158,11,.55)', label:'Totals do not add up (overbilling)', re:/line items add/},
+  {id:'unr', cls:'c-unr', color:'rgba(107,114,128,.5)', label:'Could not read a field', re:/could not read|unreadable|not readable/i},
+  {id:'ent', cls:'c-ent', color:'rgba(13,148,136,.5)', label:'Other company / entity', re:/billed to/},
+  {id:'cur', cls:'c-cur', color:'rgba(37,99,235,.45)', label:'Foreign currency', re:/billed in /},
+  {id:'lim', cls:'c-lim', color:'rgba(220,38,38,.4)', label:'Over the dollar limit / other', re:/./}];
+const catOf = r => r.flag === 'Y' ? CATS.find(c => c.re.test(r.reason || '')) : null;
+const T_OVER = {id:'over', test: r => /line items add/.test(r.reason || '')};
+const T_DUP = {id:'dup', test: r => /duplicate of|also received/.test(r.reason || '')};
+function drawLegend() {
+  const lg = $('#legend'); lg.replaceChildren();
+  const rows = ((LAST && LAST.rows) || []).filter(r => r.flag === 'Y');
+  CATS.forEach(c => {
+    const n = rows.filter(r => catOf(r) === c).length; if (!n) return;
+    const b = h('button', {'data-id': c.id, title:'Click to highlight these rows', onclick: () => highlight({id: c.id, test: r => catOf(r) === c})},
+      h('span', {class:'sw', style:'background:' + c.color}), `${c.label} (${n})`);
+    if (HL && HL.id === c.id) b.classList.add('on');
+    lg.append(b);
+  });
+  lg.append(h('span', {style:'display:inline-flex;align-items:center;gap:6px'}, h('span', {class:'sw', style:'background:rgba(22,101,52,.4)'}), 'Cleared by you'));
+}
+const openQueue = () => (LAST ? LAST.queue : []).filter(q => !isApproved({file: q.file, invoice_number: q.invoice_number, amount: q.amount}));
+function drawQueue() {
   const tb = $('#rows'); tb.replaceChildren();
-  s.queue.forEach(q => tb.append(h('tr', {},
-    h('td', {class: q.priority === 1 ? 'pri1' : 'pri2'}, q.priority === 1 ? 'High' : 'Medium'),
+  openQueue().forEach(q => tb.append(h('tr', {},
+    h('td', {class: q.priority === 1 ? 'pri1' : 'pri2'}, q.priority === 1 ? 'Check first' : 'Needs approval'),
     h('td', {}, h('div', {}, q.vendor || '(unreadable)'), h('div', {class:'small'}, (q.invoice_number || '') + '  ' + q.file)),
     h('td', {class:'num'}, money(q.amount, q.currency)), h('td', {}, q.why), h('td', {}, q.next_step))));
+}
+function refresh() {
+  const s = LAST, rows = s.rows || [];
+  const need = rows.filter(needsReview).length, appr = rows.filter(r => r.flag === 'Y' && isApproved(r)).length;
+  $('#headline').textContent = `${s.files} invoices checked: ${need} need a look` + (appr ? `, ${appr} cleared by you` : '') + `, ${s.clear} clear to pay`;
+  drawAll(); drawQueue(); drawAp();
+}
+
+function apRows() {
+  return ((LAST && LAST.rows) || []).filter(r => r.flag !== 'Y' || isApproved(r))
+    .map(r => Object.assign({}, r, {status: r.flag === 'Y' ? 'approved' : 'clear'}))
+    .sort((a, b) => (a.due_date || '9999').localeCompare(b.due_date || '9999'));
+}
+function apLine(r) { return `${r.due_date || 'no date'}  ${r.vendor || '(unreadable)'}  ${r.invoice_number || ''}  ${money(r.amount, r.currency)}${r.status === 'approved' ? ' *' : ''}`; }
+function apText(rows, limit) {
+  const sum = cur => rows.filter(r => (r.currency === 'EUR') === (cur === 'EUR')).reduce((t, r) => t + (Number(r.amount) || 0), 0);
+  const eur = sum('EUR');
+  const head = `${rows.length} invoices reviewed and ready to pay: ${money(sum('USD'))}` + (eur ? ` plus ${money(eur, 'EUR')}` : '') + ', earliest due first.';
+  const foot = ['', '* flagged, then cleared by a reviewer after checking.', 'Nothing has been paid by the review tool. Full list: ap_queue.csv.'];
+  const L = [head, ''];
+  let used = L.join('\n').length + foot.join('\n').length + 60;
+  for (let i = 0; i < rows.length; i++) {
+    const line = apLine(rows[i]);
+    if (limit && used + line.length + 1 > limit) { L.push(`...and ${rows.length - i} more. See the attached ap_queue.csv.`); break; }
+    L.push(line); used += line.length + 1;
+  }
+  return L.concat(foot).join('\n');
+}
+function drawAp() {
+  const rows = apRows(), open = ((LAST && LAST.rows) || []).filter(needsReview).length;
+  const appr = rows.filter(r => r.status === 'approved').length;
+  $('#apdesc').textContent = rows.length
+    ? `${rows.length} invoices are ready for AP (${rows.length - appr} never flagged, ${appr} flagged then cleared). ` + (open ? `${open} flagged invoices are still open and are left out.` : 'Nothing is left to review.')
+    : 'No invoices are ready for AP yet.';
+}
+try { $('#apto').value = localStorage.getItem('apto') || ''; } catch (e) {}
+$('#sendap').onclick = async () => {
+  const rows = apRows(), to = $('#apto').value.trim(), note = $('#apnote');
+  if (!rows.length) { note.textContent = 'There is nothing ready for AP yet.'; return; }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) { note.textContent = "Type AP's email address first."; return; }
+  try { localStorage.setItem('apto', to); } catch (e) {}
+  try { await api('/api/ap', {rows: rows.map(r => ({file: r.file, vendor: r.vendor, invoice_number: r.invoice_number, due_date: r.due_date, amount: r.amount, currency: r.currency, status: r.status}))}); }
+  catch (e) { note.textContent = 'Could not save the list: ' + e.message; return; }
+  const su = `Invoices ready to pay: ${rows.length} (week of ${LAST.run_date})`;
+  window.open('https://mail.google.com/mail/?view=cm&fs=1&to=' + encodeURIComponent(to) + '&su=' + encodeURIComponent(su) + '&body=' + encodeURIComponent(apText(rows, 1800)), '_blank', 'noopener');
+  note.textContent = 'A draft opened in Gmail. ap_queue.csv is saved in the results folder: attach it, review the draft, then press Send.';
+};
+$('#copyap').onclick = async () => {
+  const rows = apRows(); if (!rows.length) return;
+  try { await navigator.clipboard.writeText(apText(rows, 0)); $('#apnote').textContent = 'Copied the full list.'; }
+  catch (e) { $('#apnote').textContent = 'Could not copy. Use Send to AP instead.'; }
+};
+function showResults(s, decisions) {
+  LAST = s; DEC = decisions || {}; SORT = {col: null, dir: 1};
+  const chips = $('#chips'); chips.replaceChildren();
+  HL = null; 
+  if (s.dup_exposure) chips.append(h('button', {class:'chip', 'data-id':'dup', title:'Click to highlight these invoices', onclick: () => highlight(T_DUP)}, money(s.dup_exposure) + ' in duplicate invoices caught (show)'));
+  if (s.overbilled) chips.append(h('button', {class:'chip', 'data-id':'over', title:'Click to highlight this invoice', onclick: () => highlight(T_OVER)}, money(s.overbilled) + ' of overbilling caught (show)'));
+  chips.append(h('span', {class:'chip'}, money(s.usd_clear) + ' clear to pay'));
+  refresh(); drawLegend();
   $('#results').hidden = false; $('#results').scrollIntoView({behavior:'smooth'});
 }
 let LAST = null;
 function digestText(s) {
-  const L = [`${s.files} invoices checked: ${s.flagged} need a look, ${s.clear} clear to pay (${money(s.usd_clear)}).`, ''];
+  const L = [`${s.files} invoices checked: ${openQueue().length} need a look, ${s.clear} clear to pay (${money(s.usd_clear)}).`, ''];
   if (s.dup_exposure) L.push(`Caught: ${money(s.dup_exposure)} in duplicate invoices.`);
   if (s.overbilled) L.push(`Caught: ${money(s.overbilled)} of overbilling.`);
-  const hi = s.queue.filter(q => q.priority === 1), med = s.queue.filter(q => q.priority !== 1);
-  if (hi.length) { L.push('', 'CHECK THESE FIRST'); hi.forEach(q => L.push(`- ${q.vendor || 'Unreadable'} ${q.invoice_number || ''} ${money(q.amount, q.currency)}: ${q.next_step}`)); }
+  const qs = openQueue(), hi = qs.filter(q => q.priority === 1), med = qs.filter(q => q.priority !== 1);
+  if (hi.length) { L.push('', 'CHECK FIRST'); hi.forEach(q => L.push(`- ${q.vendor || 'Unreadable'} ${q.invoice_number || ''} ${money(q.amount, q.currency)}: ${q.next_step}`)); }
   if (med.length) L.push('', `NEEDS APPROVAL (${med.length}): over the dollar limit, foreign currency or another entity. Details are in the spreadsheet.`);
   L.push('', 'Nothing has been paid. Full list: invoice_review.xlsx, Review Queue tab.');
   return L.join('\n');
 }
-function mailSubject(s) { return `Invoice review ${s.run_date}: ${s.flagged} need a look, ${s.clear} clear`; }
+function mailSubject(s) { return `Invoice review ${s.run_date}: ${openQueue().length} need a look, ${s.clear} clear`; }
 try { $('#mailto').value = localStorage.getItem('mailto') || ''; } catch (e) {}
 $('#emailme').onclick = () => {
   if (!LAST) return;
@@ -331,6 +523,7 @@ $('#copymail').onclick = async () => {
 };
 $('#openx').onclick = () => api('/api/open', {what:'xlsx'}).catch(e => say(e.message, 'err'));
 $('#opend').onclick = () => api('/api/open', {what:'digest'}).catch(e => say(e.message, 'err'));
+$('#openi').onclick = () => api('/api/open', {what:'invdir'}).catch(e => say(e.message, 'err'));
 $('#openf').onclick = () => api('/api/open', {what:'folder'}).catch(e => say(e.message, 'err'));
 $('#quit').onclick = async () => { try { await api('/api/quit', {}); } catch (e) {} document.body.innerHTML = '<main><h1>Stopped</h1><p class="sub">You can close this tab. Double-click Start Invoice Review to open it again.</p></main>'; };
 api('/api/rules').then(d => { R = d.rules; INFO = d.info; $('#folder').value = d.folder || ''; render(); });
@@ -392,6 +585,7 @@ class Handler(BaseHTTPRequestHandler):
             folder = str((body or {}).get("folder", "")).strip().strip('"')
             if not folder or not os.path.isdir(folder):
                 return self._send(200, json.dumps({"ok": False, "output": f"Folder not found: {folder or '(empty)'}"}))
+            LAST_FOLDER["path"] = folder                    # so a file name in the table can be opened
             summary_path = os.path.join(OUT_DIR, "run_summary.json")
             if os.path.exists(summary_path):
                 os.remove(summary_path)                      # never show an old run's results by mistake
@@ -403,12 +597,64 @@ class Handler(BaseHTTPRequestHandler):
             if out["ok"]:
                 with open(summary_path, encoding="utf-8") as f:
                     out["summary"] = json.load(f)
+                out["decisions"] = load_decisions()
             elif proc.returncode == 0:
                 out["output"] += "\n\nNo results were produced. Does the folder contain invoice files (PDF, JPG, PNG or email)?"
             return self._send(200, json.dumps(out))
 
+        if self.path == "/api/decide":
+            key = str((body or {}).get("key", ""))[:400]
+            row = (body or {}).get("row") if isinstance((body or {}).get("row"), dict) else {}
+            if not key or (body or {}).get("action") not in ("approve", "undo"):
+                return self._send(400, "bad request", "text/plain")
+            d = load_decisions()
+            if body["action"] == "approve":
+                d[key] = {"file": str(row.get("file", ""))[:200], "vendor": str(row.get("vendor", ""))[:200],
+                          "invoice_number": str(row.get("invoice_number", ""))[:100], "amount": row.get("amount"),
+                          "when": datetime.now().isoformat(timespec="seconds")}
+            else:
+                d.pop(key, None)
+            save_decisions(d)
+            return self._send(200, json.dumps({"decisions": d}))
+
+        if self.path == "/api/ap":
+            rows = (body or {}).get("rows")
+            if not isinstance(rows, list) or not rows or len(rows) > 1000:
+                return self._send(400, "No invoices to send.", "text/plain")
+            os.makedirs(OUT_DIR, exist_ok=True)
+            path = os.path.join(OUT_DIR, "ap_queue.csv")
+            try:
+                with open(path, "w", newline="", encoding="utf-8") as f:
+                    w = csv.writer(f)
+                    w.writerow(["file", "vendor", "invoice_number", "due_date", "amount", "currency", "status"])
+                    for r in rows:
+                        r = r if isinstance(r, dict) else {}
+                        w.writerow([str(r.get(k, ""))[:200] for k in ("file", "vendor", "invoice_number", "due_date", "amount", "currency", "status")])
+            except PermissionError:
+                return self._send(409, "Close ap_queue.csv (it is open in Excel) and try again.", "text/plain")
+            return self._send(200, json.dumps({"file": path, "count": len(rows)}))
+
         if self.path == "/api/open":
-            target = {"xlsx": "invoice_review.xlsx", "digest": "monday_digest.txt", "folder": ""}.get((body or {}).get("what"))
+            if (body or {}).get("what") == "invoice":
+                src = LAST_FOLDER.get("path")
+                name = str(body.get("file", ""))
+                full = os.path.realpath(os.path.join(src or "", name))
+                if not src or not name or not full.startswith(os.path.realpath(src) + os.sep) or not os.path.isfile(full):
+                    return self._send(404, "That invoice file is no longer in the folder.", "text/plain")
+                if os.name == "nt":
+                    os.startfile(full)                                       # noqa: windows only
+                else:
+                    subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", full])
+                return self._send(200, "{}")
+            if (body or {}).get("what") == "invdir":
+                if not LAST_FOLDER.get("path"):
+                    return self._send(404, "Run the review first.", "text/plain")
+                if os.name == "nt":
+                    os.startfile(LAST_FOLDER["path"])                        # noqa: windows only
+                else:
+                    subprocess.Popen(["open" if sys.platform == "darwin" else "xdg-open", LAST_FOLDER["path"]])
+                return self._send(200, "{}")
+            target = {"xlsx": "invoice_review.xlsx", "digest": "monday_digest.txt", "ap": "ap_queue.csv", "folder": ""}.get((body or {}).get("what"))
             if target is None:
                 return self._send(400, "unknown", "text/plain")
             full = os.path.join(OUT_DIR, target)

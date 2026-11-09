@@ -14,6 +14,13 @@ Double-click **Start Invoice Review.bat**. A page opens in your browser (it runs
 5. Click **Quit the app** when you are done.
 The command line below does the same thing and is what a weekly scheduled job uses.
 
+## Review and send to AP
+After a run the app shows every invoice, flag first. Click a column heading to sort. For each flagged invoice,
+**Clear** (it asks you to confirm) records that a person cleared it. Cleared rows are saved in `out/approvals.csv`
+and are remembered when you run the same folder again. They do not change the spreadsheet and they do not pay anything.
+**Send to AP** opens a Gmail draft to the AP address listing every clear and approved invoice (earliest due first)
+and saves the same list as `out/ap_queue.csv` to attach. Invoices still flagged are left out.
+
 ## Getting the summary by email
 - **In the app window:** after a run, type your email address and click **Email me this summary**. A ready-to-send draft opens in Gmail and you press Send. Attach the spreadsheet if you want the full list. The app never stores a password and never sends anything by itself.
 - **Automatically every Monday:** `emailLatestDigest` in `collect_invoices.gs` finds the newest `monday_digest.txt` in Drive and emails it to you (or to `DIGEST_TO`). Add it as a weekly trigger in Apps Script. This also needs no password because it runs inside your own Google account.
@@ -91,7 +98,12 @@ Invoices that arrive by other routes (a vendor portal, a scan from the copier, a
 
 Create the Monday task with one command (edit the path):
 
-    schtasks /create /tn "Invoice Review" /tr "C:\invoices-demo\run_weekly.bat" /sc weekly /d MON /st 07:00
+    schtasks /create /tn "Invoice Review" /tr "\"C:\path\to\invoice-review\run_weekly.bat\"" /sc weekly /d MON /st 07:00
+
+Use the real folder that holds run_weekly.bat (keep the quotes if the path has spaces). Try the .bat by double-clicking
+it first and read run_log.txt next to it. Then run the task once by hand to prove the scheduler can start it:
+
+    schtasks /run /tn "Invoice Review"
 
 The PC has to be on and signed in at that time. A cloud runner (GitHub Actions or a small server) removes that limit.
 
