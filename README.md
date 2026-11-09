@@ -15,11 +15,18 @@ Double-click **Start Invoice Review.bat**. A page opens in your browser (it runs
 The command line below does the same thing and is what a weekly scheduled job uses.
 
 ## Review and send to AP
-After a run the app shows every invoice, flag first. Click a column heading to sort. For each flagged invoice,
-**Clear** (it asks you to confirm) records that a person cleared it. Cleared rows are saved in `out/approvals.csv`
-and are remembered when you run the same folder again. They do not change the spreadsheet and they do not pay anything.
-**Send to AP** opens a Gmail draft to the AP address listing every clear and approved invoice (earliest due first)
-and saves the same list as `out/ap_queue.csv` to attach. Invoices still flagged are left out.
+After a run the app shows every invoice, flag first. Click a column heading to sort.
+- **Colors and tags.** Each flagged row has a colored tag under the Y: Duplicate, Accounting error, Billed entity
+  (a portfolio company is named but the invoice is billed to Waverock Holdings), Currency, Over limit, or Review
+  (your own custom rules). The key above the table shows the count for each. Click a key item, or the
+  "duplicates" and "overbilling" chips, to highlight those rows.
+- **Open flags only** hides invoices that are clear or already cleared, so only open flags remain.
+- **File names are links.** Click one to open the original invoice. "Open the invoice folder" opens the folder.
+- **Clear** (it asks you to confirm) records that a person checked a flag. Cleared rows are saved in
+  `out/approvals.csv` and `out/decisions.json`, and are remembered when you run the same folder again. Undo reverses it.
+  Clearing does not change the spreadsheet or the Monday email, and it does not pay anything.
+- **Send to AP** opens a Gmail draft to the AP address listing every invoice that was never flagged or that you cleared
+  (earliest due first), and saves the same list as `out/ap_queue.csv` to attach. Invoices still flagged are left out.
 
 ## Getting the summary by email
 - **In the app window:** after a run, type your email address and click **Email me this summary**. A ready-to-send draft opens in Gmail and you press Send. Attach the spreadsheet if you want the full list. The app never stores a password and never sends anything by itself.
