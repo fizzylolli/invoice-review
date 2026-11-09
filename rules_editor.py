@@ -180,10 +180,13 @@ td{padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 .pri1{color:var(--bad);font-weight:600} .pri2{color:var(--warn);font-weight:600}
 .num{text-align:right;white-space:nowrap}
 th.sortable{cursor:pointer;user-select:none;white-space:nowrap} th.sortable:hover{text-decoration:underline} td.fa{color:var(--mute);font-weight:700}
-tr.flagrow td{background:rgba(220,38,38,.10)} tr.c-dup td{background:rgba(147,51,234,.14)} tr.c-math td{background:rgba(245,158,11,.22)} tr.c-cur td{background:rgba(37,99,235,.13)} tr.c-ent td{background:rgba(13,148,136,.15)} tr.c-unr td{background:rgba(107,114,128,.20)} tr.c-lim td{background:rgba(220,38,38,.10)}
-.legend{display:flex;gap:8px 14px;flex-wrap:wrap;margin:0 0 12px;font-size:13px} .legend button{cursor:pointer;border:1px solid transparent;border-radius:6px;background:none;color:inherit;font:inherit;padding:2px 6px;display:inline-flex;align-items:center;gap:6px} .legend .sw{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.25)} .legend button.on{border-color:#d97706;background:rgba(245,158,11,.15)}
+tr.flagrow td{background:rgba(220,38,38,.10)} tr.c-dup td{background:rgba(147,51,234,.14)} tr.c-math td{background:rgba(245,158,11,.22)} tr.c-cur td{background:rgba(37,99,235,.13)} tr.c-ent td{background:rgba(13,148,136,.15)} tr.c-unr td{background:rgba(107,114,128,.20)} tr.c-lim td{background:rgba(220,38,38,.10)} tr.c-oth td{background:rgba(236,72,153,.16)}
+.legend{display:flex;gap:8px 14px;flex-wrap:wrap;margin:0 0 12px;font-size:13px} .legend button{cursor:pointer;border:1px solid transparent;border-radius:6px;background:none;color:inherit;font:inherit;padding:2px 6px;display:inline-flex;align-items:center;gap:6px} .legend .sw{width:18px;height:18px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.25)} .legend button.on{border-color:#d97706;background:rgba(245,158,11,.15)}
+span.tag{display:block;margin-top:4px;padding:1px 6px;border-radius:4px;font-size:11px;font-weight:700;white-space:nowrap;width:max-content}
+label.pill{display:inline-block;padding:3px 12px;border:1px solid var(--line);border-radius:999px;background:var(--chip);font-size:13px;white-space:nowrap;cursor:pointer;user-select:none} label.pill:hover{border-color:var(--accent)} label.pill:has(input:checked){background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
 a.fl{color:inherit;text-decoration:underline dotted;cursor:pointer}
-tr.hl td{font-weight:700;border-top:2px solid #111;border-bottom:2px solid #111} tr.hl td:first-child{box-shadow:inset 5px 0 0 #111} button.chip{cursor:pointer;color:inherit;border:1px solid var(--line,#ccc);font:inherit} tr.apprrow td{background:rgba(22,101,52,.10)} button.sm{padding:4px 10px;font-size:13px;white-space:nowrap} td.act{white-space:nowrap} td.fy{color:var(--bad);font-weight:700} td.fn{color:var(--ok);font-weight:700}
+tr.hl td{font-weight:700;border-top:2px solid var(--ink);border-bottom:2px solid var(--ink)} tr.hl td:first-child{box-shadow:inset 5px 0 0 var(--ink)}
+@media (prefers-color-scheme:dark){tr.c-dup td{background:rgba(168,85,247,.38)} tr.c-math td{background:rgba(245,158,11,.38)} tr.c-cur td{background:rgba(59,130,246,.40)} tr.c-ent td{background:rgba(20,184,166,.34)} tr.c-unr td{background:rgba(156,163,175,.34)} tr.c-lim td{background:rgba(239,68,68,.34)} tr.c-oth td{background:rgba(236,72,153,.36)} tr.flagrow td{background:rgba(239,68,68,.34)} tr.apprrow td{background:rgba(34,197,94,.28)} .legend .sw{border-color:rgba(255,255,255,.7);} .legend button.on{background:rgba(245,158,11,.30)}} button.chip{cursor:pointer;color:inherit;border:1px solid var(--line,#ccc);font:inherit} tr.apprrow td{background:rgba(22,101,52,.10)} button.sm{padding:4px 10px;font-size:13px;white-space:nowrap} td.act{white-space:nowrap} td.fy{color:var(--bad);font-weight:700} td.fn{color:var(--ok);font-weight:700}
 .small{font-size:13px;color:var(--mute)}
 details>summary{cursor:pointer;font-weight:600;font-size:17px;padding:2px 0}
 .browse{margin-top:10px;border:1px solid var(--line);border-radius:8px;overflow:hidden}
@@ -213,7 +216,7 @@ pre{background:#0f172a;color:#e2e8f0;padding:12px;border-radius:8px;overflow:aut
   <h2 id="headline"></h2>
   <div class="chips" id="chips"></div>
   <div class="legend" id="legend" aria-label="Colour key"></div>
-  <div class="inline" style="margin:4px 0 8px"><label style="display:flex;align-items:center;gap:6px;white-space:nowrap"><input type="checkbox" id="onlyflag" style="width:auto;margin:0"> Only what still needs a person</label>
+  <div class="inline" style="margin:4px 0 8px"><label class="pill" title="Hide invoices that are clear or already cleared by you"><input type="checkbox" id="onlyflag" style="display:none"><span>Open flags only</span></label>
     <span class="small">Click a column heading to sort. Clearing a flag records that you checked it. It does not pay anything.</span></div>
   <div style="overflow-x:auto"><table><thead id="allhead"></thead><tbody id="allrows"></tbody></table></div>
   <details style="margin-top:12px"><summary><b>Review queue: what to do next</b></summary>
@@ -388,7 +391,7 @@ function drawAll() {
   sortedRows().filter(r => !only || needsReview(r)).forEach(r => {
     const st = r.flag !== 'Y' ? 'N' : (isApproved(r) ? 'A' : 'Y');
     tb.append(h('tr', {class: (st === 'Y' ? (catOf(r) ? catOf(r).cls : 'flagrow') : st === 'A' ? 'apprrow' : '') + (HL && HL.test(r) ? ' hl' : '')},
-      h('td', {class: st === 'Y' ? 'fy' : st === 'A' ? 'fa' : 'fn'}, st === 'A' ? 'Cleared' : r.flag),
+      h('td', {class: st === 'Y' ? 'fy' : st === 'A' ? 'fa' : 'fn'}, st === 'A' ? 'Cleared' : r.flag, (st === 'Y' && catOf(r)) ? h('span', {class:'tag', style:'background:' + catOf(r).color + ';color:' + catOf(r).ink}, catOf(r).short) : ''),
       h('td', {}, r.vendor), h('td', {}, h('a', {class:'fl', title:'Open this invoice', onclick: () => api('/api/open', {what:'invoice', file: r.file}).catch(e => say(e.message, 'err'))}, r.file)), h('td', {}, r.invoice_number), h('td', {}, r.due_date),
       h('td', {class:'num'}, r.amount === '' ? '' : money(r.amount, r.currency)), h('td', {}, r.reason),
       h('td', {class:'act'}, st === 'Y' ? approveBtn(r) : st === 'A' ? h('button', {class:'sm', onclick: () => decide(r, 'undo')}, 'Undo') : '')));
@@ -404,12 +407,13 @@ function highlight(test) {
   drawLegend();
 }
 const CATS = [
-  {id:'dup', cls:'c-dup', color:'rgba(147,51,234,.45)', label:'Duplicate (pay once)', re:/duplicate of|also received/},
-  {id:'over', cls:'c-math', color:'rgba(245,158,11,.55)', label:'Totals do not add up (overbilling)', re:/line items add/},
-  {id:'unr', cls:'c-unr', color:'rgba(107,114,128,.5)', label:'Could not read a field', re:/could not read|unreadable|not readable/i},
-  {id:'ent', cls:'c-ent', color:'rgba(13,148,136,.5)', label:'Other company / entity', re:/billed to/},
-  {id:'cur', cls:'c-cur', color:'rgba(37,99,235,.45)', label:'Foreign currency', re:/billed in /},
-  {id:'lim', cls:'c-lim', color:'rgba(220,38,38,.4)', label:'Over the dollar limit / other', re:/./}];
+  {id:'dup', cls:'c-dup', color:'#a855f7', ink:'#fff', short:'Duplicate', label:'Duplicate', re:/duplicate of|also received/},
+  {id:'over', cls:'c-math', color:'#f59e0b', ink:'#111', short:'Accounting error', label:'Accounting error', re:/line items add/},
+  {id:'unr', cls:'c-unr', color:'#9ca3af', ink:'#111', short:'Unreadable', label:'Could not read a field', re:/could not read|unreadable|not readable/i},
+  {id:'ent', cls:'c-ent', color:'#14b8a6', ink:'#111', short:'Billed entity', label:'Billed entity', re:/billed to/},
+  {id:'cur', cls:'c-cur', color:'#3b82f6', ink:'#fff', short:'Currency', label:'Foreign currency', re:/billed in /},
+  {id:'lim', cls:'c-lim', color:'#ef4444', ink:'#fff', short:'Over limit', label:'Over the dollar limit', re:/approval threshold|over \$/},
+  {id:'oth', cls:'c-oth', color:'#ec4899', ink:'#fff', short:'Review', label:'Review (your custom rules, past due)', re:/./}];
 const catOf = r => r.flag === 'Y' ? CATS.find(c => c.re.test(r.reason || '')) : null;
 const T_OVER = {id:'over', test: r => /line items add/.test(r.reason || '')};
 const T_DUP = {id:'dup', test: r => /duplicate of|also received/.test(r.reason || '')};
@@ -423,7 +427,7 @@ function drawLegend() {
     if (HL && HL.id === c.id) b.classList.add('on');
     lg.append(b);
   });
-  lg.append(h('span', {style:'display:inline-flex;align-items:center;gap:6px'}, h('span', {class:'sw', style:'background:rgba(22,101,52,.4)'}), 'Cleared by you'));
+  lg.append(h('span', {style:'display:inline-flex;align-items:center;gap:6px'}, h('span', {class:'sw', style:'background:rgba(22,101,52,.4)'}), 'Cleared'));
 }
 const openQueue = () => (LAST ? LAST.queue : []).filter(q => !isApproved({file: q.file, invoice_number: q.invoice_number, amount: q.amount}));
 function drawQueue() {
@@ -436,7 +440,7 @@ function drawQueue() {
 function refresh() {
   const s = LAST, rows = s.rows || [];
   const need = rows.filter(needsReview).length, appr = rows.filter(r => r.flag === 'Y' && isApproved(r)).length;
-  $('#headline').textContent = `${s.files} invoices checked: ${need} need a look` + (appr ? `, ${appr} cleared by you` : '') + `, ${s.clear} clear to pay`;
+  $('#headline').textContent = `${s.files} invoices checked: ${need} need a look` + (appr ? `, ${appr} cleared` : '') + `, ${s.clear} clear to pay`;
   drawAll(); drawQueue(); drawAp();
 }
 
